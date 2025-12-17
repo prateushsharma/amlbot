@@ -9,19 +9,15 @@ dotenv.config();
 const BOT_TOKEN = process.env.BOT_TOKEN;
 if (!BOT_TOKEN) throw new Error("Missing BOT_TOKEN");
 
-type Chain =
-    | "eth"
-    | "base"
-    | "avax"
-    | "arb"
-    | "op"
-    | "blast"
-    | "mantle"
-    | "ink";
+type Chain = "eth" | "base" | "avax";
 
 type CheckState = {
     mode: "check" | "tracking";
-    step: "awaiting_chain" | "awaiting_address" | "awaiting_label" | "awaiting_min_amount";
+    step:
+        | "awaiting_chain"
+        | "awaiting_address"
+        | "awaiting_label"
+        | "awaiting_min_amount";
     chain?: Chain;
     address?: string;
     label?: string;
@@ -32,7 +28,37 @@ const checkState = new Map<number, CheckState>();
 export const bot = new Bot(BOT_TOKEN);
 startTrackingWorker();
 
-/* ================= KEYBOARDS ================= */
+
+async function startLoader(ctx: any, text: string) {
+    const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let i = 0;
+
+    const msg = await ctx.reply(`${frames[i]} ${text}`);
+
+    const interval = setInterval(async () => {
+        i = (i + 1) % frames.length;
+        try {
+            await ctx.api.editMessageText(
+                ctx.chat.id,
+                msg.message_id,
+                `${frames[i]} ${text}`
+            );
+        } catch {
+            // ignore edit errors
+        }
+    }, 400);
+
+    return {
+        stop: async (finalText: string) => {
+            clearInterval(interval);
+            await ctx.api.editMessageText(
+                ctx.chat.id,
+                msg.message_id,
+                finalText
+            );
+        },
+    };
+}
 
 const mainMenuKeyboard = {
     inline_keyboard: [
@@ -66,16 +92,12 @@ const cancelKeyboard = {
     inline_keyboard: [[{ text: "❌ Cancel", callback_data: "nav:cancel" }]],
 };
 
-/* ================= START ================= */
-
 bot.command("start", async (ctx) => {
     await ctx.reply(
         "👋 Welcome to SettlX AML Bot\n\nChoose an option:",
         { reply_markup: mainMenuKeyboard }
     );
 });
-
-/* ================= CALLBACK HANDLER ================= */
 
 bot.on("callback_query:data", async (ctx) => {
     const userId = ctx.from?.id;
@@ -84,7 +106,6 @@ bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
     await ctx.answerCallbackQuery();
 
-    /* Navigation */
     if (data === "nav:menu") {
         checkState.delete(userId);
         await ctx.reply("Main menu:", { reply_markup: mainMenuKeyboard });
@@ -93,11 +114,12 @@ bot.on("callback_query:data", async (ctx) => {
 
     if (data === "nav:cancel") {
         checkState.delete(userId);
-        await ctx.reply("❌ Action cancelled.", { reply_markup: mainMenuKeyboard });
+        await ctx.reply("❌ Action cancelled.", {
+            reply_markup: mainMenuKeyboard,
+        });
         return;
     }
 
-    /* Menu */
     if (data === "menu:check") {
         checkState.set(userId, {
             mode: "check",
@@ -150,7 +172,6 @@ bot.on("callback_query:data", async (ctx) => {
         return;
     }
 
-    /* Chain selection */
     if (data.startsWith("chain:")) {
         const chain = data.split(":")[1] as Chain;
         const state = checkState.get(userId);
@@ -167,8 +188,6 @@ bot.on("callback_query:data", async (ctx) => {
     }
 });
 
-/* ================= TEXT FLOW ================= */
-
 bot.on("message:text", async (ctx) => {
     if (ctx.message.text.startsWith("/")) return;
 
@@ -180,19 +199,24 @@ bot.on("message:text", async (ctx) => {
 
     const text = ctx.message.text.trim();
 
-    /* ---------- ADDRESS STEP ---------- */
     if (state.step === "awaiting_address" && state.chain) {
         state.address = text;
 
-        // ✅ CHECK MODE → END HERE
         if (state.mode === "check") {
             try {
+                await ctx.api.sendChatAction(ctx.chat.id, "typing");
+
+                const loader = await startLoader(
+                    ctx,
+                    `🔍 Analyzing wallet on ${state.chain.toUpperCase()}`
+                );
+
                 const result = await checkWallet({
                     chain: state.chain,
                     address: state.address,
                 });
 
-                const reply =
+                const finalText =
                     "✅ Wallet Check Complete\n\n" +
                     `Chain: ${state.chain.toUpperCase()}\n` +
                     `Address: ${state.address}\n\n` +
@@ -203,7 +227,7 @@ bot.on("message:text", async (ctx) => {
                     "\n\nExplorer:\n" +
                     result.explorerLink;
 
-                await ctx.reply(reply);
+                await loader.stop(finalText);
             } catch (err) {
                 console.error(err);
                 await ctx.reply("❌ Error checking wallet.");
@@ -216,7 +240,6 @@ bot.on("message:text", async (ctx) => {
             return;
         }
 
-        // 📊 TRACKING → CONTINUE
         state.step = "awaiting_label";
         checkState.set(userId, state);
 
@@ -227,7 +250,6 @@ bot.on("message:text", async (ctx) => {
         return;
     }
 
-    /* ---------- LABEL STEP (TRACKING ONLY) ---------- */
     if (state.step === "awaiting_label" && state.address && state.chain) {
         state.label = text;
         state.step = "awaiting_min_amount";
@@ -242,7 +264,6 @@ bot.on("message:text", async (ctx) => {
         return;
     }
 
-    /* ---------- FINAL STEP (TRACKING ONLY) ---------- */
     if (
         state.step === "awaiting_min_amount" &&
         state.address &&
@@ -256,18 +277,17 @@ bot.on("message:text", async (ctx) => {
         }
 
         try {
+            await ctx.api.sendChatAction(ctx.chat.id, "typing");
+
+            const loader = await startLoader(
+                ctx,
+                `📡 Enabling tracking on ${state.chain.toUpperCase()}`
+            );
+
             const result = await checkWallet({
                 chain: state.chain,
                 address: state.address,
             });
-
-            await ctx.reply(
-                "📡 Tracking enabled!\n\n" +
-                `Chain: ${state.chain.toUpperCase()}\n` +
-                `Label: ${state.label}\n` +
-                `Min amount: ${minAmount}\n\n` +
-                `Risk Level: ${result.riskLevel}`
-            );
 
             db.prepare(`
                 INSERT OR IGNORE INTO users (telegram_user_id)
@@ -293,6 +313,13 @@ bot.on("message:text", async (ctx) => {
                 state.address,
                 state.label,
                 minAmount
+            );
+
+            await loader.stop(
+                "🎉 Tracking enabled!\n\n" +
+                `Label: ${state.label}\n` +
+                `Min amount: ${minAmount}\n` +
+                `Risk Level: ${result.riskLevel}`
             );
         } catch (err) {
             console.error(err);

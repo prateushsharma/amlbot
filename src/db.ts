@@ -1,4 +1,3 @@
-
 import Database from "better-sqlite3";
 
 export const db = new Database("aml.db");
@@ -17,6 +16,7 @@ CREATE TABLE IF NOT EXISTS tracked_addresses (
   address TEXT,
   label TEXT,
   min_amount REAL DEFAULT 0,
+  notify_any_tx INTEGER DEFAULT 0,
   is_active BOOLEAN DEFAULT 1,
   last_seen_cursor TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP

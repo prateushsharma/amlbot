@@ -86,7 +86,7 @@ export async function checkWallet(input: CheckInput): Promise<CheckResult> {
 
     
     const latestBlock = await provider.getBlockNumber();
-
+    console.log("latest block:", latestBlock);
     // scan recent blocks
     const BLOCK_WINDOW = 150;
     const txs: {
@@ -117,13 +117,12 @@ export async function checkWallet(input: CheckInput): Promise<CheckResult> {
             }
         }}
 
-    // This will be replaced later with real RPC calls
-
+   
     let riskScore = 0;
    
 
    const reasons: string[] = [];
-
+console.log("transactions found:", txs);
    // heuristic 1: high activity
    if (txs.length > 10) {
     riskScore += 30;

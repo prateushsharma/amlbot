@@ -1,6 +1,7 @@
 import { Bot } from "grammy";
 import dotenv from "dotenv";
 import { checkWallet } from "./check";
+import { addTrackedWallet, startTrackingWorker} from "./tracking";
 dotenv.config();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -18,6 +19,7 @@ const checkState = new Map<number, CheckState>();
 
 export const bot = new Bot(BOT_TOKEN);
  
+startTrackingWorker();
 
 
 // start command
@@ -66,16 +68,55 @@ bot.command("check", async (ctx) => {
         },
     });
 });
+
+bot.command("tracking", async (ctx) => {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    checkState.set(userId, {
+        step: "awaiting_chain",
+    });
+
+    await ctx.reply("Select chain to track:", {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: "Ethereum", callback_data: "track:eth" },
+                    { text: "Base", callback_data: "track:base" },
+                    { text: "Avalanche", callback_data: "track:avax" },
+                ],
+            ],
+        },
+    });
+});
+
 bot.on("callback_query:data", async (ctx) => {
     console.log("🔘 callback query received");
 
     const userId = ctx.from?.id;
     if (!userId) return;
 
+    const data = ctx.callbackQuery.data;
+
+    if (data.startsWith("track:")){
+        const chain = data.split(":")[1] as "eth" | "base" | "avax";
+
+        checkState.set(userId, {
+            step: "awaiting_address",
+            chain,
+        });
+
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+            `Tracking on ${chain.toUpperCase()} enabled. \n\n` +
+            "Please send the wallet address to track:  "
+        );
+        return ;
+    }
     const state = checkState.get(userId);
     if (!state || state.step !== "awaiting_chain") return;
 
-    const data = ctx.callbackQuery.data;
+  
     console.log("📦 callback data:", data);
 
     if (!data.startsWith("chain:")) return;
@@ -98,7 +139,7 @@ bot.on("callback_query:data", async (ctx) => {
 
 
 bot.on("message:text", async (ctx) => {
-    // 🚫 Ignore commands
+    //  Ignore commands
     if (ctx.message.text.startsWith("/")) return;
 
     const userId = ctx.from?.id;
@@ -127,12 +168,20 @@ bot.on("message:text", async (ctx) => {
             result.explorerLink;
 
         await ctx.reply(reply);
+        addTrackedWallet({
+            userId,
+            chain: state.chain,
+            address,
+            lastRiskLevel: result.riskLevel,
+        });
+        await ctx.reply("✅ Wallet added to tracking list. You will be notified of any risk level changes.");
     } catch (err) {
         console.error("checkWallet error:", err);
         await ctx.reply("❌ Error checking wallet. Please ensure the address is valid.");
-    } finally {
-        checkState.delete(userId);
     }
-});
+     finally {
+        checkState.delete(userId);
+     }
+    });
 
 

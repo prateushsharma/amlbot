@@ -1,49 +1,39 @@
-import { checkWallet } from "./check";
-import { bot } from "./bot";
-
-type TrackedWallet = {
-    userId: number,
-    chain: "eth" | "base" | "avax";
-    address: string;
-    lastRiskLevel: "Low"|"Medium"|"High";
-};
-
-const tracked = new Map<string, TrackedWallet>();
-
-function key(w: TrackedWallet) {
-    return `${w.userId}:${w.address}`;
-}
-
-export function addTrackedWallet(w: TrackedWallet) {
-    tracked.set(key(w), w);
-}
+import {db} from "./db";
+import { checkWallet} from "./check";
+import {bot} from "./bot";
 
 export function startTrackingWorker() {
-    setInterval(async () => {
-        for (const [k,w] of tracked.entries()) {
-            try {
-                const result = await checkWallet({
-                    chain: w.chain,
-                    address: w.address,
-                });
+    setInterval(() => {
+        const tracked = db.prepare(`
+            SELECT
+            ta.id as tarcked_id,
+            ta.chain,
+            ta.address,
+            ta.last_seen_cursor,
+            u.telegram_user_id
+            FROM tracked_addresses ta
+            JOIN users u ON u.id = ta.user_id
+            WHERE ta.is_active = 1
+        `).all();
 
-                if (result.riskLevel !== w.lastRiskLevel) {
-                    tracked.set(k, {
-                        ...w,
-                        lastRiskLevel: result.riskLevel,
-                    });
-                    await bot.api.sendMessage(
-                        w.userId,
-                        `🚨 Risk level changed\n\n` +
-              `Chain: ${w.chain.toUpperCase()}\n` +
-              `Address: ${w.address}\n` +
-              `New level: ${result.riskLevel}\n\n` +
-              result.explorerLink
-                    );
-                }
-            } catch (e) {
-                console.error("tracking error",e);
-            }
+        for (const row of tracked) {
+            processTrackedAddress(row);
         }
-    }, 5 * 60 * 1000);
+    } , 5 *60 * 1000);}
+
+async function processTrackedAddress(row: any) {
+    const result = await checkWallet({
+        chain: row.chain,
+        address: row.address,
+    });
+
+    // alert on HIGH risk
+    if (result.riskLevel !== "High")  return;
+
+    const exists = db.prepare(`
+        SELECT 1 FROM alert_events
+        WHERE tracked_address_id = ?
+        AND chain = ?`)
+
+
 }

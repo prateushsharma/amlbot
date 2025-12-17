@@ -2,9 +2,10 @@
   "name": "settlx-aml-bot",
   "version": "1.0.0",
   "scripts": {
-    "dev": "tsx watch src/api/server.ts"
+    "dev": "tsx watch src/server.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^12.5.0",
     "dotenv": "^17.2.3",
     "ethers": "^6.16.0",
     "express": "^5.2.1",

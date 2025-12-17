@@ -1,7 +1,8 @@
 import { Bot } from "grammy";
 import dotenv from "dotenv";
 import { checkWallet } from "./check";
-import { addTrackedWallet, startTrackingWorker} from "./tracking";
+import { startTrackingWorker} from "./tracking";
+import { db } from "./db";
 dotenv.config();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -137,9 +138,8 @@ bot.on("callback_query:data", async (ctx) => {
     );
 });
 
-
 bot.on("message:text", async (ctx) => {
-    //  Ignore commands
+    // 🚫 Ignore commands
     if (ctx.message.text.startsWith("/")) return;
 
     const userId = ctx.from?.id;
@@ -151,11 +151,13 @@ bot.on("message:text", async (ctx) => {
     const address = ctx.message.text.trim();
 
     try {
+        // 1️⃣ Run wallet analysis
         const result = await checkWallet({
             chain: state.chain,
             address,
         });
 
+        // 2️⃣ Send analysis result
         const reply =
             "✅ Wallet Check Complete\n\n" +
             `Chain: ${state.chain.toUpperCase()}\n` +
@@ -168,20 +170,38 @@ bot.on("message:text", async (ctx) => {
             result.explorerLink;
 
         await ctx.reply(reply);
-        addTrackedWallet({
-            userId,
-            chain: state.chain,
-            address,
-            lastRiskLevel: result.riskLevel,
-        });
-        await ctx.reply("✅ Wallet added to tracking list. You will be notified of any risk level changes.");
+
+        // 3️⃣ Ensure user exists in DB
+        db.prepare(`
+            INSERT OR IGNORE INTO users (telegram_user_id)
+            VALUES (?)
+        `).run(userId);
+
+        // 4️⃣ Fetch internal user id
+        const userRow = db.prepare(`
+            SELECT id FROM users WHERE telegram_user_id = ?
+        `).get(userId) as { id: number };
+
+        // 5️⃣ Insert tracked address
+        db.prepare(`
+            INSERT INTO tracked_addresses (
+                user_id,
+                chain,
+                address,
+                is_active
+            ) VALUES (?, ?, ?, 1)
+        `).run(userRow.id, state.chain, address);
+
+        // 6️⃣ Confirmation
+        await ctx.reply("📡 Tracking enabled for this wallet.");
+
     } catch (err) {
         console.error("checkWallet error:", err);
-        await ctx.reply("❌ Error checking wallet. Please ensure the address is valid.");
-    }
-     finally {
+        await ctx.reply(
+            "❌ Error checking wallet. Please ensure the address is valid."
+        );
+    } finally {
+        // 7️⃣ Always clear state
         checkState.delete(userId);
-     }
-    });
-
-
+    }
+});
